@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>TTF - Terminal Chat</title>
+    <style>
+        :root {
+            --bg: #0a0a0a;
+            --me: #2ecc71;
+            --others: #f1c40f;
+            --text-normal: #dcdcdc;
+            --text-new: #2ecc71; /* Verde para mensagens novas */
+        }
+
+        @font-face {
+            font-family: 'Hack Nerd Font Mono';
+            src: local('Hack Nerd Font Mono'); /* Tenta carregar localmente primeiro */
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-normal);
+            font-family: 'Hack Nerd Font Mono', monospace;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Telas */
+        #login-screen {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            text-align: center;
+        }
+        #chat-screen {
+            display: none;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            padding: 10px 20px;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+            font-size: 0.9em;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        #chat-area {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .msg { line-height: 1.4; transition: color 0.3s; }
+        .msg.new-msg { color: var(--text-new); }
+        .timestamp { color: #555; font-size: 0.8em; margin-right: 5px; }
+        .user-name { font-weight: bold; }
+        .me { color: var(--me); }
+        .others { color: var(--others); }
+        
+        .media-content { max-width: 250px; border: 1px solid #333; margin-top: 5px; display: block; }
+
+        #input-container {
+            padding: 15px 20px;
+            background: #111;
+            display: flex;
+            align-items: center;
+            border-top: 1px solid #333;
+        }
+
+        input[type="text"], input[type="password"] {
+            background: transparent;
+            border: none;
+            color: white;
+            font-family: inherit;
+            font-size: 1em;
+            outline: none;
+            padding: 5px;
+        }
+
+        .login-input { border-bottom: 1px solid #555 !important; margin: 10px 0; text-align: center; }
+        #prompt { color: var(--me); margin-right: 10px; }
+        
+        button {
+            background: #333; color: white; border: none; padding: 8px 15px; cursor: pointer; font-family: inherit;
+        }
+        button:hover { background: #444; }
+        
+        .tools-btn { background: none; color: #888; font-size: 1.2em; cursor: pointer; border: none; margin-right: 10px;}
+    </style>
+</head>
+<body>
+
+<!-- TELA DE LOGIN -->
+<div id="login-screen">
+    <h1 style="color: var(--me)">TTF SYSTEM LOGIN</h1>
+    <p>Insira suas credenciais para acessar o terminal.</p>
+    <input type="text" id="login-user" class="login-input" placeholder="Usuário" autocomplete="off"><br>
+    <input type="password" id="login-pass" class="login-input" placeholder="Senha/PIN" autocomplete="off"><br>
+    <button onclick="realizarLogin()">[ ENTRAR ]</button>
+</div>
+
+<!-- TELA DO CHAT -->
+<div id="chat-screen">
+    <header>
+        <span>TTF - Connected to elnoorz/TT</span>
+        <span>
+            <label for="font-upload" style="cursor: pointer; color: #f1c40f;">[Mudar Fonte .ttf]</label>
+            <input type="file" id="font-upload" accept=".ttf" style="display:none" onchange="carregarFonte(this)">
+        </span>
+    </header>
+
+    <div id="chat-area"></div>
+
+    <div id="input-container">
+        <span id="prompt">user@ttf:~$</span>
+        <input type="file" id="file-input" style="display:none" onchange="enviarArquivo(this)">
+        <button class="tools-btn" onclick="document.getElementById('file-input').click()" title="Anexar Mídia">📎</button>
+        <input type="text" id="cmd-input" placeholder="Escreva e aperte Enter..." autocomplete="off">
+    </div>
+</div>
+
+<script>
+    // ==========================================
+    // CONFIGURAÇÕES GERAIS E GITHUB API
+    // ==========================================
+    const GITHUB_TOKEN = "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"; // Cole o token que você gerou
+    const REPO_OWNER = "elnoorz";
+    const REPO_NAME = "TT";
+    const FILE_PATH = "database.json";
+    
+    let currentUser = "";
+    let lastFileSha = "";
+    let chatData = [];
+    let isFirstLoad = true;
+
+    // Funções seguras para converter texto com acentos para Base64 (exigência do GitHub)
+    function utf8_to_b64(str) { return window.btoa(unescape(encodeURIComponent(str))); }
+    function b64_to_utf8(str) { return decodeURIComponent(escape(window.atob(str))); }
+
+    // ==========================================
+    // LÓGICA DE LOGIN
+    // ==========================================
+    function realizarLogin() {
+        const user = document.getElementById('login-user').value.trim();
+        const pass = document.getElementById('login-pass').value.trim();
+        
+        // Aqui você pode definir a senha que quiser. Ex: "1234" ou "senha123"
+        if (user !== "" && pass !== "") {
+            currentUser = user;
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('chat-screen').style.display = 'flex';
+            document.getElementById('prompt').innerText = `${currentUser.toLowerCase()}@ttf:~$`;
+            
+            sincronizarChat(); // Carrega as mensagens ao logar
+            setInterval(sincronizarChat, 5000); // Atualiza o chat a cada 5 segundos
+        } else {
+            alert("Acesso negado. Insira usuário e senha.");
+        }
+    }
+
+    // ==========================================
+    // LÓGICA DO CHAT (LER E ESCREVER)
+    // ==========================================
+    async function sincronizarChat() {
+        const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
+        
+        try {
+            const response = await fetch(url, {
+                headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}` }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                lastFileSha = data.sha; // Guarda o SHA para podermos atualizar o arquivo depois
+                
+                const conteudoDecodificado = b64_to_utf8(data.content);
+                const mensagensBaixadas = JSON.parse(conteudoDecodificado);
+                
+                // Se houver mensagens novas, renderiza
+                if (mensagensBaixadas.length > chatData.length) {
+                    const novasMensagens = mensagensBaixadas.slice(chatData.length);
+                    novasMensagens.forEach(msg => renderizarMensagem(msg, !isFirstLoad));
+                    chatData = mensagensBaixadas;
+                    
+                    const chatArea = document.getElementById('chat-area');
+                    chatArea.scrollTop = chatArea.scrollHeight;
+                }
+                isFirstLoad = false;
+            }
+        } catch (error) {
+            console.error("Erro ao sincronizar com GitHub:", error);
+        }
+    }
+
+    async function enviarParaGitHub(novaMensagemObj) {
+        chatData.push(novaMensagemObj);
+        renderizarMensagem(novaMensagemObj, false); // Renderiza na tela imediatamente
+        
+        const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
+        const conteudoNovoB64 = utf8_to_b64(JSON.stringify(chatData, null, 2));
+
+        try {
+            const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${GITHUB_TOKEN}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    message: `Nova mensagem de ${currentUser}`,
+                    content: conteudoNovoB64,
+                    sha: lastFileSha // Necessário para atualizar arquivos existentes
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                lastFileSha = data.content.sha; // Atualiza o SHA
+            }
+        } catch (error) {
+            console.error("Erro ao enviar mensagem:", error);
+        }
+    }
+
+    // ==========================================
+    // INTERFACE E EVENTOS
+    // ==========================================
+    const input = document.getElementById('cmd-input');
+    
+    // Enviar mensagem de texto e remover a cor verde das mensagens antigas
+    input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && input.value.trim() !== "") {
+            removerCorVerde(); // Quando você escreve, as mensagens voltam a ficar brancas
+            
+            const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            const novaMsg = { user: currentUser, text: input.value, type: 'text', time: horaAtual };
+            
+            enviarParaGitHub(novaMsg);
+            input.value = "";
+        }
+    });
+
+    function renderizarMensagem(msgObj, destacarComoNova = false) {
+        const div = document.createElement('div');
+        div.className = 'msg';
+        if (destacarComoNova) div.classList.add('new-msg'); // Aplica classe verde se for nova
+        
+        const isMe = msgObj.user === currentUser;
+        const userClass = isMe ? 'me' : 'others';
+        
+        let html = `<span class="timestamp">[${msgObj.time}]</span> `;
+        html += `<span class="${userClass} user-name">${msgObj.user}</span> >>> `;
+        
+        if (msgObj.type === 'image') {
+            html += `<br><img src="${msgObj.text}" class="media-content">`;
+        } else if (msgObj.type === 'video') {
+            html += `<br><video src="${msgObj.text}" controls class="media-content"></video>`;
+        } else {
+            html += `<span>${msgObj.text}</span>`;
+        }
+
+        div.innerHTML = html;
+        document.getElementById('chat-area').appendChild(div);
+        document.getElementById('chat-area').scrollTop = document.getElementById('chat-area').scrollHeight;
+    }
+
+    function removerCorVerde() {
+        const mensagens = document.querySelectorAll('.new-msg');
+        mensagens.forEach(msg => msg.classList.remove('new-msg'));
+    }
+
+    // ==========================================
+    // UPLOAD DE MÍDIA E FONTE PERSONALIZADA
+    // ==========================================
+    function enviarArquivo(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        removerCorVerde();
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            let tipoMsg = 'text';
+            if (file.type.startsWith('image/')) tipoMsg = 'image';
+            if (file.type.startsWith('video/')) tipoMsg = 'video';
+            
+            const horaAtual = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            enviarParaGitHub({ user: currentUser, text: e.target.result, type: tipoMsg, time: horaAtual });
+        };
+        reader.readAsDataURL(file); // Converte para Base64
+    }
+
+    async function carregarFonte(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                // Cria uma nova regra de fonte na memória do navegador
+                const font = new FontFace('FontePersonalizada', e.target.result);
+                await font.load();
+                document.fonts.add(font);
+                document.body.style.fontFamily = "'FontePersonalizada', monospace";
+                alert("Fonte atualizada com sucesso!");
+            } catch (err) {
+                console.error("Erro ao carregar fonte:", err);
+                alert("O arquivo fornecido não é uma fonte válida ou suportada.");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+</script>
+</body>
+</html>
